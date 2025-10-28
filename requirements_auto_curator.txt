@@ -1,0 +1,30 @@
+# 自动图像筛选工具依赖包
+# 基础依赖（必需）
+opencv-python>=4.8.0
+pandas>=2.0.0
+numpy>=1.24.0
+pathlib2>=2.3.7
+
+# 高级对象检测（推荐）
+ultralytics>=8.0.0  # YOLOv8
+torch>=2.0.0
+torchvision>=0.15.0
+
+# OCR文本检测（可选）
+paddleocr>=2.7.0
+paddlepaddle>=2.5.0
+
+# 图像质量评估（可选增强）
+scikit-image>=0.21.0
+pillow>=10.0.0
+
+# 安装命令：
+# pip install -r requirements_auto_curator.txt
+#
+# 如果只需要基础功能（不包含YOLO和OCR）：
+# pip install opencv-python pandas numpy pathlib2
+#
+# 注意：
+# - PaddleOCR需要额外的模型下载，首次运行时会自动下载
+# - YOLOv8模型会在首次使用时自动下载
+# - 如果安装torch有问题，请访问 https://pytorch.org/ 获取适合你系统的安装命令
