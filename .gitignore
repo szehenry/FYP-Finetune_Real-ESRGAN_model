@@ -57,6 +57,24 @@ Images/rejected_images/
 *.csv
 !requirements*.txt
 
+# Image files (training data)
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tiff
+*.tif
+
+# Results and outputs
+data_preparation_results/
+degradation_results/
+training_results/
+checkpoints/
+*.pth
+*.ckpt
+
 # Backup files
 *_backup.*
 
+# proposal documents
+*.docx

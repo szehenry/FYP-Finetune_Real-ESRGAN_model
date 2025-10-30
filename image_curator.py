@@ -11,7 +11,6 @@
 - 支持斷點續傳
 - 可選OCR文本檢測
 
-作者：為FYP項目創建
 
 工作流程說明：
 1. 首先設置標籤（按 t 切換文本標籤，按 0-9 選擇場景類型）
@@ -44,7 +43,7 @@ class ImageCurator:
         self.use_ocr = use_ocr and OCR_AVAILABLE
         
         # 拒絕圖像的存放路徑
-        self.rejected_folder = Path('/Users/henrysze/Library/CloudStorage/OneDrive-TheHongKongPolytechnicUniversity/Y4_SEM1/FYP/Images_Aerial-Traffic/rejected_images')
+        self.rejected_folder = Path('/Users/henrysze/Library/CloudStorage/OneDrive-TheHongKongPolytechnicUniversity/Y4_SEM1/FYP_Images/Images_SwissOkutama/rejected_images')
         # 確保拒絕文件夾存在
         self.rejected_folder.mkdir(parents=True, exist_ok=True)
         
@@ -462,10 +461,10 @@ class ImageCurator:
 def main():
     parser = argparse.ArgumentParser(description='圖像篩選和標註工具')
     parser.add_argument('--root', 
-                       default='/Users/henrysze/Library/CloudStorage/OneDrive-TheHongKongPolytechnicUniversity/Y4_SEM1/FYP/Images_Aerial-Traffic',
+                       default='/Users/henrysze/Library/CloudStorage/OneDrive-TheHongKongPolytechnicUniversity/Y4_SEM1/FYP_Images/Images_SwissOkutama',
                        help='圖像文件夾路徑')
     parser.add_argument('--csv', 
-                       default='/Users/henrysze/Library/CloudStorage/OneDrive-TheHongKongPolytechnicUniversity/Y4_SEM1/FYP/accepted_set_Aerial-Traffic.csv',
+                       default='/Users/henrysze/Library/CloudStorage/OneDrive-TheHongKongPolytechnicUniversity/Y4_SEM1/FYP/accepted_set_SwissOkutama.csv',
                        help='CSV輸出文件路徑')
     parser.add_argument('--ocr', action='store_true', help='啟用OCR文本檢測')
     
