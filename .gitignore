@@ -54,7 +54,7 @@ Thumbs.db
 
 # Project specific
 Images/rejected_images/
-*.csv
+
 !requirements*.txt
 
 # Image files (training data)
