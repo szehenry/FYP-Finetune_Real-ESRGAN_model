@@ -1,0 +1,20 @@
+# 降質合成所需套件 (Requirements for Degradation Synthesis)
+# Phase 2 - Image Degradation Synthesis
+
+# 核心套件 (Core packages)
+numpy>=1.21.0
+opencv-python>=4.5.0
+torch>=2.0.0
+torchvision>=0.15.0
+tqdm>=4.65.0
+
+# YOLOv8 物體偵測 (Object detection)
+ultralytics>=8.0.0
+
+# 可選：影像處理增強套件 (Optional: Advanced image processing)
+# kornia>=0.7.0  # 進階影像處理（如果需要更多濾波器）
+
+# 工具套件 (Utility packages)
+Pillow>=9.0.0
+scipy>=1.9.0
+

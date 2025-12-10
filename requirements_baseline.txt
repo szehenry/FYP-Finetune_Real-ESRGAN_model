@@ -1,0 +1,33 @@
+# 基準測試環境依賴
+# ================================
+# 用於運行 baseline_evaluation.py
+# 不包含 Real-ESRGAN（需要單獨環境）
+
+# 核心依賴
+numpy>=1.21.0
+opencv-python>=4.5.0
+pandas>=1.3.0
+tqdm>=4.62.0
+matplotlib>=3.4.0
+Pillow>=8.3.0
+
+# 科學計算
+scikit-image>=0.18.0
+scipy>=1.7.0
+
+# 深度學習（用於 LPIPS）
+torch>=1.7.0
+torchvision>=0.8.0
+
+# LPIPS（感知損失指標）
+lpips>=0.1.4
+
+# 圖像質量評估（NIQE, BRISQUE）
+pyiqa>=0.1.7
+
+# 可選：CUDA 加速（如果有 GPU）
+# 根據您的 CUDA 版本，選擇對應的 PyTorch：
+# CUDA 11.8: --index-url https://download.pytorch.org/whl/cu118
+# CUDA 12.1: --index-url https://download.pytorch.org/whl/cu121
+# CPU only: --index-url https://download.pytorch.org/whl/cpu
+

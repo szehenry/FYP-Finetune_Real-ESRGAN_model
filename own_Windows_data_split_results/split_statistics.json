@@ -1,0 +1,45 @@
+{
+  "split_ratios": {
+    "train": 0.7,
+    "val": 0.15,
+    "test": 0.15
+  },
+  "random_seed": 42,
+  "total_statistics": {
+    "train": 3069,
+    "val": 636,
+    "test": 686
+  },
+  "per_dataset_statistics": {
+    "Aerial-Traffic": {
+      "train": 276,
+      "val": 56,
+      "test": 64,
+      "total": 396
+    },
+    "FloodNet": {
+      "train": 665,
+      "val": 128,
+      "test": 150,
+      "total": 943
+    },
+    "UAV-VisLoc": {
+      "train": 216,
+      "val": 44,
+      "test": 52,
+      "total": 312
+    },
+    "VisDrone2019": {
+      "train": 1632,
+      "val": 348,
+      "test": 356,
+      "total": 2336
+    },
+    "SwissOkutama": {
+      "train": 280,
+      "val": 60,
+      "test": 64,
+      "total": 404
+    }
+  }
+}
