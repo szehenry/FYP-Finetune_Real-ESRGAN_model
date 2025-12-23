@@ -1,0 +1,46 @@
+# Real-ESRGAN 基準測試環境依賴
+# ================================
+# 用於運行 evaluate_realesrgan_only.py 和 merge_baseline_results.py
+
+# 核心依賴（與 baseline 一致）
+numpy>=1.21.0
+opencv-python>=4.5.0
+pandas>=1.3.0
+tqdm>=4.62.0
+matplotlib>=3.4.0
+Pillow>=8.3.0
+
+# 科學計算
+scikit-image>=0.18.0
+scipy>=1.7.0
+
+# 深度學習框架（PyTorch for CUDA 11.8）
+# 如果是其他 CUDA 版本，請參考：https://pytorch.org/get-started/locally/
+torch>=2.0.0
+torchvision>=0.15.0
+
+# LPIPS（感知損失指標）
+lpips>=0.1.4
+
+# Real-ESRGAN 相關
+basicsr>=1.4.2
+facexlib>=0.3.0
+gfpgan>=1.3.8
+realesrgan>=0.3.0
+
+# 額外的圖像處理
+timm>=0.6.12
+einops>=0.4.1
+
+# 安裝說明
+# ================================
+# Windows (CUDA 11.8):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#   pip install basicsr facexlib gfpgan realesrgan
+#   pip install -r requirements_realesrgan_baseline.txt
+#
+# CPU Only:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#   pip install basicsr facexlib gfpgan realesrgan
+#   pip install -r requirements_realesrgan_baseline.txt
+

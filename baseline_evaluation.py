@@ -80,7 +80,7 @@ class Config:
     FAILURE_DIR = OUTPUT_DIR / "failure_cases"
     
     # 樣本數量（用於可視化）
-    NUM_SAMPLES = 20
+    NUM_SAMPLES = 50  # 增加到 50 張（包含 Real-ESRGAN 對比）
     NUM_FAILURE_SAMPLES = 10
     
     # 基準方法配置
@@ -104,7 +104,11 @@ class Config:
     UNSHARP_AMOUNT = 1.5
     
     # 設備配置
-    DEVICE = 'cuda' if torch.cuda.is_available() if 'torch' in dir() else False else 'cpu'
+    try:
+        import torch
+        DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+    except:
+        DEVICE = 'cpu'
 
 
 # ==================== 基準方法 ====================
