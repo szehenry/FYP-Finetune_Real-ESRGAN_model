@@ -16,7 +16,11 @@ Usage examples:
 import os
 import sys
 import argparse
-import yaml
+try:
+    import yaml
+except Exception:
+    print("Missing dependency: PyYAML (import yaml). Install with: pip install pyyaml")
+    raise
 import time
 from pathlib import Path
 from typing import Dict, Any, List
@@ -46,6 +50,25 @@ class ConvLoRA(nn.Module):
     def forward(self, x):
         return self.up(self.down(x)) * self.alpha
 
+
+class Conv2dWithLoRA(nn.Module):
+    """Wrap a nn.Conv2d with a small LoRA adapter (down/up 1x1 convs).
+    The original conv's parameters are frozen; only the adapter params are trainable.
+    """
+    def __init__(self, conv: nn.Conv2d, rank=8, alpha=1.0):
+        super().__init__()
+        # keep a reference to the original conv module
+        self.conv = conv
+        # freeze base conv params
+        for p in self.conv.parameters():
+            p.requires_grad = False
+        # adapter applied to activations (1x1 down/up)
+        self.lora = ConvLoRA(conv.in_channels, conv.out_channels, rank=rank, alpha=alpha)
+
+    def forward(self, x):
+        # base conv output + LoRA adapter output
+        return self.conv(x) + self.lora(x)
+
 # Example: patching RRDBBlock convs (this is pseudo and must match basicsr's RRDBNet impl)
 class RRDBWithLoRA(nn.Module):
     def __init__(self, base_rrdb, rank=8, alpha=1.0, insert_in_blocks=True):
@@ -53,25 +76,30 @@ class RRDBWithLoRA(nn.Module):
         self.base = base_rrdb
         self.rank = rank
         self.alpha = alpha
-        self.adapters = nn.ModuleList()
-        # traverse modules and add adapters where conv2d exists in residual blocks
-        for name, module in self.base.named_modules():
+        # Replace target Conv2d modules in-place with Conv2dWithLoRA wrapper so the
+        # LoRA adapter is applied at the correct conv locations. Only adapter
+        # parameters (inside the wrappers) will be trainable.
+        # We iterate over a copy of named_modules to avoid mutation issues.
+        for name, module in list(self.base.named_modules()):
             if isinstance(module, nn.Conv2d):
-                # only add adapters to convs inside residual blocks heuristically
                 if 'residual' in name or 'rrdb' in name or insert_in_blocks:
-                    a = ConvLoRA(module.in_channels, module.out_channels, rank, alpha)
-                    self.adapters.append((name, a))
-        # store mapping (simple list for this small script)
+                    # locate parent module and replace child in parent._modules
+                    parts = name.split('.')
+                    parent = self.base
+                    for p in parts[:-1]:
+                        parent = parent._modules.get(p)
+                        if parent is None:
+                            break
+                    else:
+                        child_name = parts[-1]
+                        # ensure current child matches expected module
+                        if child_name in parent._modules and parent._modules[child_name] is module:
+                            parent._modules[child_name] = Conv2dWithLoRA(module, rank=rank, alpha=alpha)
 
     def forward(self, x):
-        # run base model to get base_out
-        base_out = self.base(x)
-        # naive: sum adapters applied to input and add to base_out (illustrative)
-        delta = 0
-        for nm, adapter in self.adapters:
-            # naive application (not aligned with base conv positions) - for demo only
-            delta = delta + adapter(x)
-        return base_out + delta
+    # Delegates to the patched base model; Conv2dWithLoRA wrappers will
+    # produce base_conv(x) + adapter(x) for replaced convs.
+    return self.base(x)
 
 
 class PairedDataset(Dataset):
@@ -114,10 +142,42 @@ class PairedDataset(Dataset):
 
     def __getitem__(self, idx):
         rec = self.pairs[idx]
-        degraded = cv2.imread(rec['degraded_path'])
-        gt = cv2.imread(rec['target_path'])
+
+        # resolve primary key first, then fallback to "(P)" variants
+        def resolve_path(record, base_key):
+            primary = record.get(base_key)
+            if isinstance(primary, str):
+                p = Path(primary.strip())
+                if p.exists():
+                    return str(p)
+            # try explicit "(P)" column names (two common variants)
+            alt_keys = [f"{base_key}(P)", f"{base_key} (P)"]
+            for k in alt_keys:
+                v = record.get(k)
+                if isinstance(v, str):
+                    p2 = Path(v.strip())
+                    if p2.exists():
+                        return str(p2)
+            # nothing found
+            tried = {base_key: record.get(base_key), alt_keys[0]: record.get(alt_keys[0]), alt_keys[1]: record.get(alt_keys[1])}
+            raise FileNotFoundError(f"No existing file found for keys {list(tried.keys())}. Values: {tried}")
+
+        degraded_path = resolve_path(rec, 'degraded_path')
+        target_path = resolve_path(rec, 'target_path')
+
+        # metadata is optional; try to resolve if present
+        metadata_path = None
+        if ('metadata_path' in rec) or ('metadata_path(P)' in rec) or ('metadata_path (P)' in rec):
+            try:
+                metadata_path = resolve_path(rec, 'metadata_path')
+            except FileNotFoundError:
+                metadata_path = None
+
+        degraded = cv2.imread(degraded_path)
+        gt = cv2.imread(target_path)
         if degraded is None or gt is None:
-            raise RuntimeError('Failed to read images')
+            raise RuntimeError(f'Failed to read images. degraded: {degraded_path}, target: {target_path}')
+
         if degraded.shape != gt.shape:
             degraded = cv2.resize(degraded, (gt.shape[1], gt.shape[0]))
         if self.small:
@@ -195,6 +255,11 @@ def train_loop(cfg, resume: bool = False):
 
     loss_l1 = nn.L1Loss()
 
+    # prepare AMP GradScaler once if requested and CUDA is available
+    scaler = None
+    if cfg.get('amp', False) and device.type == 'cuda':
+        scaler = torch.cuda.amp.GradScaler()
+
     for epoch in range(start_epoch, cfg['epochs']):
         model.train()
         total_loss = 0.0
@@ -202,11 +267,10 @@ def train_loop(cfg, resume: bool = False):
             lr = lr.to(device)
             hr = hr.to(device)
             optimizer.zero_grad()
-            with torch.cuda.amp.autocast(enabled=cfg['amp'] and device.type=='cuda'):
+            with torch.cuda.amp.autocast(enabled=(scaler is not None)):
                 out = model(lr)
                 loss = loss_l1(out, hr)
-            if cfg['amp'] and device.type=='cuda':
-                scaler = torch.cuda.amp.GradScaler()
+            if scaler is not None:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
@@ -261,5 +325,37 @@ if __name__ == '__main__':
         cfg['patch_size'] = 128
     else:
         cfg['epochs'] = cfg.get('epochs', 50)
+
+    # resolve configured absolute paths: prefer given path, otherwise try swapping drive to P:
+    import re
+    def resolve_cfg_path(path_str):
+        try:
+            p = Path(path_str)
+        except Exception:
+            return path_str
+        if p.exists():
+            return str(p)
+        s = str(path_str)
+        # normalize slashes
+        s2 = s.replace('/', '\\')
+        if Path(s2).exists():
+            return str(Path(s2))
+        # if path has a drive letter, replace it with P:
+        m = re.match(r'^([A-Za-z]):(.*)$', s2)
+        if m:
+            alt = 'P:' + m.group(2)
+            if Path(alt).exists():
+                return str(Path(alt))
+        # last attempt: swap leading drive to P: even if original had no drive
+        if len(s2) > 2 and s2[1] == ':':
+            alt2 = 'P:' + s2[2:]
+            if Path(alt2).exists():
+                return str(Path(alt2))
+        return path_str
+
+    if 'pairs_csv' in cfg:
+        cfg['pairs_csv'] = resolve_cfg_path(cfg['pairs_csv'])
+    if 'model_path' in cfg:
+        cfg['model_path'] = resolve_cfg_path(cfg['model_path'])
 
     train_loop(cfg, resume=args.resume)
