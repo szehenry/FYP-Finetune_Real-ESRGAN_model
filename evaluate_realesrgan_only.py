@@ -103,11 +103,16 @@ class RealESRGANOnlyConfig(BaseConfig):
     LPIPS_ENABLED = True
     
     # Real-ESRGAN 參數
-    TILE = 400  # 分塊處理大小（RTX 3060 優化）
+    TILE = 512  # 平衡內存和速度（512 是安全值，適合 RTX 3060 6GB/12GB）
     TILE_PAD = 10
     PRE_PAD = 0
-    FP32 = False  # 使用 FP16 加速
+    FP32 = True  # 使用 FP32（更穩定，避免內存碎片）
     OUTSCALE = 1  # 保持原大小
+    
+    # Checkpoint 配置
+    CHECKPOINT_ENABLED = True  # 啟用 checkpoint 恢復
+    CHECKPOINT_INTERVAL = 50  # 每 50 張保存一次
+    CHECKPOINT_FILE = OUTPUT_DIR / "checkpoint.json"
     
     # 設備
     try:
@@ -234,7 +239,7 @@ class RealESRGANOnlyEvaluator:
         
         print(f"📁 載入配對信息: {self.config.PAIRS_CSV}")
         df = pd.read_csv(self.config.PAIRS_CSV)
-        print(f"✓ 載入 {len(df)} 對配對")
+        print(f"✓ 載入 {len(df)} 對配對（包含所有增強版本，與 baseline 一致）")
         
         # 顯示退化類型統計
         print("\n退化類型統計:")
@@ -263,9 +268,9 @@ class RealESRGANOnlyEvaluator:
         print(f"\n💡 評估策略:")
         print(f"  ✅ PSNR/SSIM: 所有 {total_images} 張圖像")
         print(f"  ✅ LPIPS: 隨機抽樣 {sample_size} 張 ({sample_size/total_images*100:.1f}%)")
-        print(f"  🔧 記憶體管理: 自動清理 GPU 快取")
+        print(f"  🔧 記憶體管理: 每張圖像後清理 GPU 快取")
         print(f"  ⚡ 使用設備: {self.config.DEVICE}")
-        print(f"\n📈 預計時間: ~2-3 小時（取決於 GPU）")
+        print(f"\n📈 預計時間: ~23-28 小時（與 HenryCC baseline 一致）")
         
         # 初始化結果存儲
         all_results = []
@@ -299,15 +304,18 @@ class RealESRGANOnlyEvaluator:
             if degraded.shape != original.shape:
                 degraded = cv2.resize(degraded, (original.shape[1], original.shape[0]))
             
-            # 判斷是否對這張圖計算 LPIPS
+            # 判斷是否對這張圖計算 LPIPS（使用 enum_idx 確保從0開始的連續索引）
             calculate_lpips_for_this_image = enum_idx in lpips_sample_indices
             
             try:
                 # 應用 Real-ESRGAN
                 enhanced = self.realesrgan.enhance(degraded)
                 
-                # 計算有參考指標
-                metrics = self.calculator.evaluate_with_reference(enhanced, original)
+                # 計算有參考指標（僅對抽樣的圖像計算 LPIPS）
+                metrics = self.calculator.evaluate_with_reference(
+                    enhanced, original, 
+                    calculate_lpips=calculate_lpips_for_this_image
+                )
                 
                 # 記錄結果
                 result_entry = {
@@ -320,11 +328,10 @@ class RealESRGANOnlyEvaluator:
                 }
                 all_results.append(result_entry)
                 
-                # 🔧 定期清理記憶體（每 50 張圖像）
-                if (enum_idx + 1) % 50 == 0:
-                    del degraded, original, enhanced
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+                # 🔧 每張圖像後立即清理記憶體（與 HenryCC 版本一致）
+                del degraded, original, enhanced
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             
             except Exception as e:
                 print(f"  ⚠️  Real-ESRGAN 處理 {degraded_path.name} 失敗: {e}")

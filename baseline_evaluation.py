@@ -372,18 +372,25 @@ class MetricsCalculator:
     
     # ==================== 綜合評估 ====================
     
-    def evaluate_with_reference(self, pred: np.ndarray, gt: np.ndarray) -> Dict[str, float]:
-        """有參考評估（需要 Ground Truth）"""
+    def evaluate_with_reference(self, pred: np.ndarray, gt: np.ndarray, calculate_lpips: bool = True) -> Dict[str, float]:
+        """有參考評估（需要 Ground Truth）
+        
+        Args:
+            pred: 預測圖像
+            gt: Ground Truth 圖像
+            calculate_lpips: 是否計算 LPIPS（默認 True，支持隨機抽樣優化）
+        """
         metrics = {}
         
         # 基本指標
         metrics['psnr'] = self.calculate_psnr(pred, gt)
         metrics['ssim'] = self.calculate_ssim(pred, gt)
         
-        # LPIPS（如果可用）
-        lpips_val = self.calculate_lpips(pred, gt)
-        if lpips_val is not None:
-            metrics['lpips'] = lpips_val
+        # LPIPS（如果可用且需要計算）
+        if calculate_lpips:
+            lpips_val = self.calculate_lpips(pred, gt)
+            if lpips_val is not None:
+                metrics['lpips'] = lpips_val
         
         # 銳度指標（在預測圖上）
         metrics['var_laplacian'] = self.variance_of_laplacian(pred)

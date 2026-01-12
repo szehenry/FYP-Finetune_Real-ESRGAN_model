@@ -1,0 +1,11 @@
+# Training config for LoRA adapter
+model_path: "D:/Real-ESRGAN/experiments/pretrained_models/RealESRGAN_x4plus.pth"
+pairs_csv: "D:/degraded_full_dataset/pairs.csv"
+rank: 8
+alpha: 1.0
+lr: 1e-4
+batch_size: 8
+epochs: 50
+checkpoint: "./lora_checkpoint.pth"
+patch_size: 256
+amp: true
