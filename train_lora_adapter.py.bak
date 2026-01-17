@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+"""
+Backup of train_lora_adapter.py before optimizer-device fix
+"""
+# Backup content omitted for brevity.

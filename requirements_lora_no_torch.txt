@@ -1,0 +1,13 @@
+# LoRA training dependencies (install PyTorch separately first!)
+# Install torch via: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+numpy
+pandas
+opencv-python
+pyyaml
+tqdm
+scikit-image
+matplotlib
+lpips
+basicsr
+realesrgan
+torchmetrics

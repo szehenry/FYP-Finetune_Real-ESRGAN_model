@@ -9,7 +9,7 @@ basicsr
 realesrgan
 scikit-image
 matplotlib
-yaml
+pyyaml
 albumentations
 ultralytics
 torchmetrics

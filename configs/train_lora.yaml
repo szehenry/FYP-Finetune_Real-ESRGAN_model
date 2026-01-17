@@ -1,11 +1,35 @@
 # Training config for LoRA adapter
+# Paths - will auto-fallback to P: drive if D: not found
 model_path: "D:/Real-ESRGAN/experiments/pretrained_models/RealESRGAN_x4plus.pth"
 pairs_csv: "D:/degraded_full_dataset/pairs.csv"
-rank: 8
-alpha: 1.0
-lr: 1e-4
-batch_size: 8
-epochs: 50
-checkpoint: "./lora_checkpoint.pth"
-patch_size: 256
+# model_path: "P:/Real-ESRGAN/experiments/pretrained_models/RealESRGAN_x4plus.pth"
+# pairs_csv: "P:/degraded_full_dataset/pairs.csv"
+
+# LoRA hyperparameters
+rank: 8           # LoRA rank (lower = fewer params, higher = more capacity)
+alpha: 1.0        # LoRA scaling factor
+
+# Training hyperparameters
+lr: 1e-4          # Initial learning rate
+batch_size: 8     # Batch size per GPU
+epochs: 50        # Total epochs for full training
+patch_size: 256   # Random crop size for training
+
+# Learning rate scheduler (like Real-ESRGAN reference)
+use_scheduler: true
+lr_milestones: [25, 40]   # Epochs to reduce LR
+lr_gamma: 0.5             # LR reduction factor
+
+# Loss functions
+# L1 loss is always used as primary loss
+use_perceptual_loss: false  # Enable LPIPS perceptual loss (requires lpips package)
+perceptual_weight: 0.1      # Weight for perceptual loss if enabled
+
+# Mixed precision training
 amp: true
+
+# Checkpointing
+checkpoint: "./lora_checkpoint.pth"
+epoched_checkpoints: true   # Save checkpoint per epoch
+save_lora_only: true        # Also save LoRA-only weights (smaller file)
+keep_last: 5                # Keep only last N epoched checkpoints
