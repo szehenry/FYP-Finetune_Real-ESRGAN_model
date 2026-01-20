@@ -27,6 +27,15 @@ from typing import Dict, Any, List
 
 import random
 import numpy as np
+import platform
+
+# Fix multiprocessing issues on macOS
+if platform.system() == 'Darwin':
+    import multiprocessing
+    try:
+        multiprocessing.set_start_method('spawn', force=False)
+    except RuntimeError:
+        pass  # Already set
 
 import torch
 import torch.nn as nn
@@ -50,6 +59,23 @@ def compute_psnr(img1: torch.Tensor, img2: torch.Tensor, max_val: float = 1.0) -
     if mse == 0:
         return float('inf')
     return 10 * np.log10((max_val ** 2) / mse)
+
+
+# Helper: format time duration
+def format_duration(seconds: float) -> str:
+    """Format seconds into human-readable string (e.g., '2h 30m 45s')."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    
+    parts = []
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0 or hours > 0:
+        parts.append(f"{minutes}m")
+    parts.append(f"{secs}s")
+    
+    return ' '.join(parts)
 
 # Minimal LoRA adapter for Conv2d
 class ConvLoRA(nn.Module):
@@ -186,31 +212,55 @@ class PairedDataset(Dataset):
     def __getitem__(self, idx):
         rec = self.pairs[idx]
 
-        # resolve primary key first, then fallback to "(P)" variants
+        # resolve path by trying multiple column variants for cross-platform support
+        # Priority order: base column -> (P) variant -> (Mac) variant
+        # This allows the same CSV to work on Windows (D:\, P:\) and Mac (/Volumes/...)
         def resolve_path(record, base_key):
-            primary = record.get(base_key)
-            if isinstance(primary, str):
-                p = Path(primary.strip())
-                if p.exists():
-                    return str(p)
-            # try explicit "(P)" column names (two common variants)
-            alt_keys = [f"{base_key}(P)", f"{base_key} (P)"]
-            for k in alt_keys:
-                v = record.get(k)
-                if isinstance(v, str):
-                    p2 = Path(v.strip())
-                    if p2.exists():
-                        return str(p2)
-            # nothing found
-            tried = {base_key: record.get(base_key), alt_keys[0]: record.get(alt_keys[0]), alt_keys[1]: record.get(alt_keys[1])}
-            raise FileNotFoundError(f"No existing file found for keys {list(tried.keys())}. Values: {tried}")
+            # Define all possible column name variants to try
+            # Order: primary -> Windows P: variant -> Mac variant
+            column_variants = [
+                base_key,                    # e.g., "degraded_path" (D:\...)
+                f"{base_key}(P)",            # e.g., "degraded_path(P)" (P:\...)
+                f"{base_key} (P)",           # e.g., "degraded_path (P)" (P:\...)
+                f"{base_key}(Mac)",          # e.g., "degraded_path(Mac)" (/Volumes/...)
+                f"{base_key} (Mac)",         # e.g., "degraded_path (Mac)" (/Volumes/...)
+                f"{base_key}_mac",           # e.g., "degraded_path_mac"
+                f"{base_key}_Mac",           # e.g., "degraded_path_Mac"
+            ]
+            
+            tried_paths = {}
+            for col_name in column_variants:
+                value = record.get(col_name)
+                if isinstance(value, str) and value.strip():
+                    path_str = value.strip()
+                    p = Path(path_str)
+                    tried_paths[col_name] = path_str
+                    if p.exists():
+                        return str(p)
+            
+            # nothing found - provide detailed error message
+            if not tried_paths:
+                raise FileNotFoundError(
+                    f"No path columns found for '{base_key}'. "
+                    f"Tried columns: {column_variants}. "
+                    f"Available columns: {list(record.keys())}"
+                )
+            raise FileNotFoundError(
+                f"No existing file found for '{base_key}'. "
+                f"Tried paths:\n" + 
+                "\n".join(f"  - {col}: {path}" for col, path in tried_paths.items())
+            )
 
         degraded_path = resolve_path(rec, 'degraded_path')
         target_path = resolve_path(rec, 'target_path')
 
         # metadata is optional; try to resolve if present
+        # Check for any metadata column variant
+        metadata_columns = ['metadata_path', 'metadata_path(P)', 'metadata_path (P)', 
+                           'metadata_path(Mac)', 'metadata_path (Mac)', 'metadata_path_mac', 'metadata_path_Mac']
         metadata_path = None
-        if ('metadata_path' in rec) or ('metadata_path(P)' in rec) or ('metadata_path (P)' in rec):
+        has_metadata_col = any(col in rec for col in metadata_columns)
+        if has_metadata_col:
             try:
                 metadata_path = resolve_path(rec, 'metadata_path')
             except FileNotFoundError:
@@ -249,15 +299,37 @@ def freeze_base_params(model):
 
 
 def load_base_rrdb(model_path: Path):
-    # create RRDB from basicsr
+    """Load RRDBNet model, with fallback for basicsr compatibility issues."""
+    RRDBNet = None
+    
+    # Method 1: Try direct import from basicsr.archs (avoids problematic data module)
     try:
-        from basicsr.archs.rrdbnet_arch import RRDBNet
-    except Exception as e:
-        raise RuntimeError('basicsr is required')
+        import basicsr.archs.rrdbnet_arch as rrdb_module
+        RRDBNet = rrdb_module.RRDBNet
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    
+    # Method 2: If basicsr fails, try realesrgan package
+    if RRDBNet is None:
+        try:
+            from realesrgan.archs.rrdbnet_arch import RRDBNet as RRDBNetAlt
+            RRDBNet = RRDBNetAlt
+        except ImportError:
+            pass
+    
+    # Method 3: Define RRDBNet locally (standalone implementation)
+    if RRDBNet is None:
+        print("Warning: basicsr/realesrgan not available, using built-in RRDBNet")
+        RRDBNet = _get_builtin_rrdbnet()
+    
+    if RRDBNet is None:
+        raise RuntimeError('Could not load RRDBNet. Install basicsr or realesrgan: pip install basicsr')
+    
     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
     # load pretrained weights
     if model_path.exists():
-        import torch
         ckpt = torch.load(str(model_path), map_location='cpu', weights_only=True)
         if 'params_ema' in ckpt:
             state = ckpt['params_ema']
@@ -265,6 +337,67 @@ def load_base_rrdb(model_path: Path):
             state = ckpt
         model.load_state_dict(state, strict=False)
     return model
+
+
+def _get_builtin_rrdbnet():
+    """Standalone RRDBNet implementation for when basicsr is not available."""
+    
+    class ResidualDenseBlock(nn.Module):
+        def __init__(self, num_feat=64, num_grow_ch=32):
+            super().__init__()
+            self.conv1 = nn.Conv2d(num_feat, num_grow_ch, 3, 1, 1)
+            self.conv2 = nn.Conv2d(num_feat + num_grow_ch, num_grow_ch, 3, 1, 1)
+            self.conv3 = nn.Conv2d(num_feat + 2 * num_grow_ch, num_grow_ch, 3, 1, 1)
+            self.conv4 = nn.Conv2d(num_feat + 3 * num_grow_ch, num_grow_ch, 3, 1, 1)
+            self.conv5 = nn.Conv2d(num_feat + 4 * num_grow_ch, num_feat, 3, 1, 1)
+            self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+        def forward(self, x):
+            x1 = self.lrelu(self.conv1(x))
+            x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
+            x3 = self.lrelu(self.conv3(torch.cat((x, x1, x2), 1)))
+            x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
+            x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
+            return x5 * 0.2 + x
+
+    class RRDB(nn.Module):
+        def __init__(self, num_feat, num_grow_ch=32):
+            super().__init__()
+            self.rdb1 = ResidualDenseBlock(num_feat, num_grow_ch)
+            self.rdb2 = ResidualDenseBlock(num_feat, num_grow_ch)
+            self.rdb3 = ResidualDenseBlock(num_feat, num_grow_ch)
+
+        def forward(self, x):
+            out = self.rdb1(x)
+            out = self.rdb2(out)
+            out = self.rdb3(out)
+            return out * 0.2 + x
+
+    class RRDBNet(nn.Module):
+        def __init__(self, num_in_ch=3, num_out_ch=3, scale=4, num_feat=64, num_block=23, num_grow_ch=32):
+            super().__init__()
+            self.scale = scale
+            self.conv_first = nn.Conv2d(num_in_ch, num_feat, 3, 1, 1)
+            self.body = nn.Sequential(*[RRDB(num_feat, num_grow_ch) for _ in range(num_block)])
+            self.conv_body = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+            # upsampling
+            self.conv_up1 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+            self.conv_up2 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+            self.conv_hr = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+            self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+            self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+        def forward(self, x):
+            feat = self.conv_first(x)
+            body_feat = self.conv_body(self.body(feat))
+            feat = feat + body_feat
+            # upsample
+            feat = self.lrelu(self.conv_up1(nn.functional.interpolate(feat, scale_factor=2, mode='nearest')))
+            feat = self.lrelu(self.conv_up2(nn.functional.interpolate(feat, scale_factor=2, mode='nearest')))
+            out = self.conv_last(self.lrelu(self.conv_hr(feat)))
+            return out
+    
+    return RRDBNet
 
 
 def save_checkpoint(state: Dict[str, Any], path: Path):
@@ -312,20 +445,46 @@ def build_model_and_optimizer(cfg):
 
 
 def train_loop(cfg, resume: bool = False):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Support CUDA (NVIDIA), MPS (Apple Silicon), or CPU
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        print(f'Using CUDA: {torch.cuda.get_device_name(0)}')
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        device = torch.device('mps')
+        print('Using Apple MPS (Metal Performance Shaders)')
+    else:
+        device = torch.device('cpu')
+        print('Using CPU (this will be slow)')
     scale = int(cfg.get('scale', 4))  # Real-ESRGAN default is 4x
     patch_size = int(cfg['patch_size'])
     batch_size = int(cfg['batch_size'])
+    
+    # MPS memory management: automatically reduce settings if they might cause OOM
+    if device.type == 'mps':
+        # MPS has limited memory pool (~46GB on M4 Max)
+        # RRDB is very memory-hungry, especially with large patches
+        max_safe_batch = 4 if patch_size <= 128 else 2 if patch_size <= 192 else 1
+        if batch_size > max_safe_batch:
+            print(f'⚠️  MPS memory warning: batch_size={batch_size} may cause OOM with patch_size={patch_size}')
+            print(f'    Automatically reducing batch_size to {max_safe_batch}')
+            batch_size = max_safe_batch
+        if patch_size > 192:
+            print(f'⚠️  MPS memory warning: patch_size={patch_size} is very large for MPS')
+            print(f'    Consider reducing to 128 or 192 if you encounter OOM errors')
     
     print(f'Training config: patch_size={patch_size}, scale={scale}, batch_size={batch_size}')
     print(f'  LR input: {patch_size}x{patch_size}, HR target: {patch_size*scale}x{patch_size*scale}')
     
     ds = PairedDataset(Path(cfg['pairs_csv']), patch_size=patch_size, split='train', 
                        small=(cfg['mode']=='small'), scale=scale)
-    dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    # pin_memory is only beneficial for CUDA, not MPS
+    # num_workers may cause issues on macOS, reduce if needed
+    pin_mem = (device.type == 'cuda')
+    num_workers = 4 if device.type == 'cuda' else 2  # Reduce workers on MPS to avoid multiprocessing issues
+    dl = DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_mem)
     val_ds = PairedDataset(Path(cfg['pairs_csv']), patch_size=patch_size, split='val', 
                            small=True, scale=scale)
-    val_dl = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2)
+    val_dl = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=num_workers, pin_memory=pin_mem)
 
     model, optimizer, scheduler = build_model_and_optimizer(cfg)
     model.to(device)
@@ -344,6 +503,8 @@ def train_loop(cfg, resume: bool = False):
         print('Warning: use_perceptual_loss=True but lpips not installed. Using L1 only.')
 
     start_epoch = 0
+    accumulated_time = 0.0  # Total training time from previous sessions (seconds)
+    
     if resume and Path(cfg['checkpoint']).exists():
         ck = load_checkpoint(Path(cfg['checkpoint']))
         model.load_state_dict(ck['model_state'])
@@ -360,18 +521,45 @@ def train_loop(cfg, resume: bool = False):
         if scheduler is not None and ck.get('scheduler_state') is not None:
             scheduler.load_state_dict(ck['scheduler_state'])
         start_epoch = ck.get('epoch', 0)
-        print('Resumed from checkpoint epoch', start_epoch)
+        # Restore accumulated training time
+        accumulated_time = ck.get('total_training_time', 0.0)
+        print(f'Resumed from checkpoint epoch {start_epoch}')
+        print(f'  Previous training time: {format_duration(accumulated_time)}')
 
     loss_l1 = nn.L1Loss()
 
     # prepare AMP GradScaler once if requested and CUDA is available
     # Use new PyTorch 2.0+ API (torch.amp instead of torch.cuda.amp)
+    # Note: AMP is only supported on CUDA, not MPS
     scaler = None
-    if cfg.get('amp', False) and device.type == 'cuda':
+    use_amp = cfg.get('amp', False) and device.type == 'cuda'
+    if use_amp:
         scaler = torch.amp.GradScaler('cuda')
+        print('AMP (Mixed Precision) enabled')
 
     epochs = int(cfg['epochs'])
+    session_start_time = time.time()  # Start timer for this training session
+    
+    # Signal handler for graceful interruption (Ctrl+C)
+    import signal
+    interrupted = False
+    def signal_handler(signum, frame):
+        nonlocal interrupted
+        interrupted = True
+        session_elapsed = time.time() - session_start_time
+        total_time = accumulated_time + session_elapsed
+        print(f'\n\n⚠️  Training interrupted!')
+        print(f'  This session: {format_duration(session_elapsed)}')
+        print(f'  Total training time: {format_duration(total_time)}')
+        print('  (Progress saved in last checkpoint)')
+        raise KeyboardInterrupt
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    print(f'\nStarting training from epoch {start_epoch+1} to {epochs}...\n')
+    
     for epoch in range(start_epoch, epochs):
+        epoch_start_time = time.time()
         model.train()
         total_loss = 0.0
         
@@ -381,7 +569,7 @@ def train_loop(cfg, resume: bool = False):
             lr = lr.to(device)
             hr = hr.to(device)
             optimizer.zero_grad()
-            with torch.amp.autocast('cuda', enabled=(scaler is not None)):
+            with torch.amp.autocast(device.type, enabled=use_amp):
                 out = model(lr)
                 # L1 loss
                 l1_val = loss_l1(out, hr)
@@ -404,16 +592,30 @@ def train_loop(cfg, resume: bool = False):
             
             # Update progress bar with current loss
             pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+            
+            # Clear cache periodically to prevent memory buildup
+            # More frequent clearing on MPS due to memory pool limitations
+            clear_interval = 10 if device.type == 'mps' else 50
+            if i % clear_interval == 0:
+                if device.type == 'cuda':
+                    torch.cuda.empty_cache()
+                elif device.type == 'mps':
+                    torch.mps.empty_cache()
+                    # Force synchronization to ensure memory is freed
+                    torch.mps.synchronize()
 
         avg_loss = total_loss / len(dl)
+        epoch_time = time.time() - epoch_start_time
+        session_elapsed = time.time() - session_start_time
+        total_time = accumulated_time + session_elapsed
         
         # Step learning rate scheduler if enabled
         if scheduler is not None:
             scheduler.step()
             current_lr = scheduler.get_last_lr()[0]
-            print(f'Epoch {epoch+1}/{epochs} - avg loss: {avg_loss:.6f} - lr: {current_lr:.2e}')
+            print(f'Epoch {epoch+1}/{epochs} - avg loss: {avg_loss:.6f} - lr: {current_lr:.2e} - epoch time: {format_duration(epoch_time)} - total: {format_duration(total_time)}')
         else:
-            print(f'Epoch {epoch+1}/{epochs} - avg loss: {avg_loss:.6f}')
+            print(f'Epoch {epoch+1}/{epochs} - avg loss: {avg_loss:.6f} - epoch time: {format_duration(epoch_time)} - total: {format_duration(total_time)}')
 
         # validation with PSNR
         model.eval()
@@ -434,12 +636,15 @@ def train_loop(cfg, resume: bool = False):
             avg_psnr = np.mean(val_psnr_list)
             print(f'  Validation PSNR: {avg_psnr:.2f} dB')
 
-        # checkpoint
+        # checkpoint (include total training time)
+        session_elapsed = time.time() - session_start_time
+        total_time = accumulated_time + session_elapsed
         ck_state = {
             'epoch': epoch+1,
             'model_state': model.state_dict(),
             'optim_state': optimizer.state_dict(),
             'scheduler_state': scheduler.state_dict() if scheduler is not None else None,
+            'total_training_time': total_time,  # Accumulated training time in seconds
         }
         ck_path = Path(cfg['checkpoint'])
         # always save latest
@@ -470,7 +675,16 @@ def train_loop(cfg, resume: bool = False):
                 pass
         print('Checkpoint saved', cfg['checkpoint'])
 
-    print('Training finished')
+    # Calculate final total time
+    session_elapsed = time.time() - session_start_time
+    total_time = accumulated_time + session_elapsed
+    
+    print('\n' + '='*60)
+    print('✅ Training finished!')
+    print(f'  This session: {format_duration(session_elapsed)}')
+    print(f'  Total training time: {format_duration(total_time)}')
+    print(f'  Epochs completed: {epochs}')
+    print('='*60)
 
 
 if __name__ == '__main__':
@@ -495,7 +709,8 @@ if __name__ == '__main__':
     else:
         cfg['epochs'] = cfg.get('epochs', 50)
 
-    # resolve configured absolute paths: prefer given path, otherwise try swapping drive to P:
+    # resolve configured absolute paths: prefer given path, otherwise try alternative paths
+    # Supports: D:\ (Windows laptop) -> P:\ (other Windows) -> /Volumes/Extreme SSD (Mac)
     import re
     def resolve_cfg_path(path_str):
         try:
@@ -505,21 +720,38 @@ if __name__ == '__main__':
         if p.exists():
             return str(p)
         s = str(path_str)
-        # normalize slashes
+        
+        # Extract the relative path part (after drive letter or volume)
+        # e.g., "D:/degraded_full_dataset/pairs.csv" -> "degraded_full_dataset/pairs.csv"
+        relative_path = None
+        m = re.match(r'^([A-Za-z]):[/\\](.*)$', s)
+        if m:
+            relative_path = m.group(2).replace('\\', '/')
+        
+        # List of base paths to try (in order)
+        base_paths = [
+            'D:/',                      # Windows laptop
+            'P:/',                      # Other Windows machines
+            '/Volumes/Extreme SSD/',    # Mac external SSD
+        ]
+        
+        if relative_path:
+            for base in base_paths:
+                test_path = Path(base) / relative_path
+                if test_path.exists():
+                    print(f'  Path resolved: {path_str} -> {test_path}')
+                    return str(test_path)
+        
+        # Legacy fallback: try swapping drive letters directly
         s2 = s.replace('/', '\\')
         if Path(s2).exists():
             return str(Path(s2))
-        # if path has a drive letter, replace it with P:
-        m = re.match(r'^([A-Za-z]):(.*)$', s2)
         if m:
             alt = 'P:' + m.group(2)
             if Path(alt).exists():
                 return str(Path(alt))
-        # last attempt: swap leading drive to P: even if original had no drive
-        if len(s2) > 2 and s2[1] == ':':
-            alt2 = 'P:' + s2[2:]
-            if Path(alt2).exists():
-                return str(Path(alt2))
+        
+        # Return original if nothing works (will fail later with clear error)
         return path_str
 
     if 'pairs_csv' in cfg:

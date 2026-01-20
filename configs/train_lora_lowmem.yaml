@@ -1,0 +1,36 @@
+# ============================================================
+# LoRA Training - LOW MEMORY Configuration (for 6GB VRAM GPU)
+# ============================================================
+
+# Paths
+model_path: "D:/Real-ESRGAN/experiments/pretrained_models/RealESRGAN_x4plus.pth"
+pairs_csv: "D:/degraded_full_dataset/pairs.csv"
+
+# LoRA Architecture
+rank: 8
+alpha: 1.0
+
+# === LOW MEMORY SETTINGS ===
+lr: 1e-4
+batch_size: 1         # 最小 batch size
+epochs: 50
+patch_size: 64        # 很小的 patch，LR: 64x64 → HR: 256x256
+scale: 4
+
+# Learning rate scheduler
+use_scheduler: true
+lr_milestones: [25, 40]
+lr_gamma: 0.5
+
+# Loss
+use_perceptual_loss: false  # 關閉以節省記憶體
+perceptual_weight: 0.1
+
+# Performance
+amp: true  # 必須開啟！
+
+# Checkpointing
+checkpoint: "./lora_checkpoint_lowmem.pth"
+epoched_checkpoints: true
+save_lora_only: true
+keep_last: 3

@@ -1,0 +1,36 @@
+# ============================================================
+# LoRA Training - RTX 4060 Configuration (8GB VRAM)
+# ============================================================
+
+# Paths - modify these for the other computer
+model_path: "D:/Real-ESRGAN/experiments/pretrained_models/RealESRGAN_x4plus.pth"
+pairs_csv: "D:/degraded_full_dataset/pairs.csv"
+
+# LoRA Architecture
+rank: 8
+alpha: 1.0
+
+# === RTX 4060 OPTIMIZED ===
+lr: 1e-4
+batch_size: 2         # 安全的 batch size
+epochs: 50
+patch_size: 128       # LR: 128x128 → HR: 512x512
+scale: 4
+
+# Learning rate scheduler
+use_scheduler: true
+lr_milestones: [25, 40]
+lr_gamma: 0.5
+
+# Loss
+use_perceptual_loss: false
+perceptual_weight: 0.1
+
+# Performance
+amp: true
+
+# Checkpointing
+checkpoint: "./lora_checkpoint.pth"
+epoched_checkpoints: true
+save_lora_only: true
+keep_last: 5

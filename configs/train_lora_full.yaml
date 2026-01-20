@@ -1,0 +1,77 @@
+# ============================================================
+# LoRA Training Configuration - Full Training Template
+# ============================================================
+# Copy this file and modify for different experiments
+
+# === Paths ===
+model_path: "D:/Real-ESRGAN/experiments/pretrained_models/RealESRGAN_x4plus.pth"
+pairs_csv: "D:/degraded_full_dataset/pairs.csv"
+
+# === LoRA Architecture ===
+# rank: Controls model capacity
+#   - 4: ~230K params, fast training, simple tasks
+#   - 8: ~460K params, balanced (RECOMMENDED)
+#   - 16: ~920K params, complex degradations
+#   - 32: ~1.8M params, very complex tasks
+rank: 16
+
+# alpha: Scaling factor for LoRA output
+#   - 1.0: Standard (RECOMMENDED)
+#   - 0.5: More subtle effect
+#   - 2.0: Stronger effect (may be unstable)
+alpha: 1.0
+
+# === Training Hyperparameters ===
+# lr: Learning rate
+#   - 5e-5: Slow but stable
+#   - 1e-4: Standard (RECOMMENDED)
+#   - 2e-4: Faster but may oscillate
+lr: 1e-4
+
+# batch_size: Images per batch
+#   - 2: ~12GB VRAM (Mac MPS recommended)
+#   - 4: ~20GB VRAM
+#   - 8: ~40GB VRAM (may exceed MPS limit on Mac)
+#   - 16: ~80GB VRAM (CUDA only)
+# Note: For Mac, start with batch_size=2, increase if memory allows
+batch_size: 4
+
+# epochs: Training iterations
+#   - 20-30: Quick experiment
+#   - 50: Standard training (RECOMMENDED)
+#   - 100: Deep training (watch for overfitting)
+epochs: 50
+
+# patch_size: Crop size for training (LR input size)
+#   - 128: Fast, less context (Mac MPS recommended)
+#   - 192: Balanced for Mac
+#   - 256: Balanced (CUDA recommended)
+#   - 384/512: More context, more VRAM (CUDA only)
+# Note: HR output = patch_size * scale (e.g., 128*4=512, 256*4=1024)
+patch_size: 128
+
+# scale: Upscaling factor (must match pretrained model)
+scale: 4
+
+# === Learning Rate Scheduler ===
+use_scheduler: true
+lr_milestones: [25, 40] # Reduce LR at these epochs
+lr_gamma: 0.5 # Multiply LR by this at each milestone
+
+# === Loss Functions ===
+# L1 loss is always enabled
+# use_perceptual_loss: Add LPIPS for better visual quality
+#   - false: Pixel-level optimization only
+#   - true: Add perceptual quality (RECOMMENDED for visual tasks)
+use_perceptual_loss: false
+perceptual_weight: 0.1
+
+# === Performance ===
+# amp: Automatic Mixed Precision (faster, less VRAM) true for windows, false for macos
+amp: false
+
+# === Checkpointing ===
+checkpoint: "./lora_checkpoint.pth"
+epoched_checkpoints: true # Save each epoch separately
+save_lora_only: true # Also save LoRA-only weights (smaller)
+keep_last: 5 # Keep only last N epoch checkpoints
