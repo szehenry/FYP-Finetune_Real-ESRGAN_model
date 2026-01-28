@@ -195,22 +195,22 @@ class ObjectMotionBlurSynthesizer:
         
         if YOLO_AVAILABLE:
             try:
-                # 載入 YOLOv8-seg 模型
+                
                 print("載入 YOLOv8-seg 模型...")
-                self.model = YOLO('yolov8n-seg.pt')  # nano 版本，速度快
+                self.model = YOLO('yolov8n-seg.pt')  
                 self.model.to(device)
                 print(f"ObjectMotionBlurSynthesizer 使用設備: {device}")
             except Exception as e:
                 print(f"載入 YOLOv8 模型失敗: {e}")
                 self.model = None
         
-        # 車輛相關的 COCO 類別 ID
+        
         self.vehicle_classes = {
-            2: 'car',           # 汽車
-            3: 'motorcycle',    # 摩托車
-            5: 'bus',           # 巴士
-            7: 'truck',         # 卡車
-            1: 'bicycle',       # 自行車
+            2: 'car',           
+            3: 'motorcycle',    
+            5: 'bus',           
+            7: 'truck',         
+            1: 'bicycle',       
         }
     
     def detect_objects(self, image: np.ndarray, 

@@ -691,7 +691,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='configs/train_lora.yaml')
     parser.add_argument('--mode', type=str, default='small', choices=['small', 'full'])
-    parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--resume', action='store_true', help='Resume from checkpoint')
+    parser.add_argument('--checkpoint', type=str, default=None, 
+                        help='Specific checkpoint file to resume from (overrides config)')
     args = parser.parse_args()
 
     # load config
@@ -708,6 +710,12 @@ if __name__ == '__main__':
         cfg['patch_size'] = 128
     else:
         cfg['epochs'] = cfg.get('epochs', 50)
+    
+    # Allow overriding checkpoint path from command line
+    if args.checkpoint:
+        cfg['checkpoint'] = args.checkpoint
+        args.resume = True  # Automatically enable resume if checkpoint specified
+        print(f'Using custom checkpoint: {args.checkpoint}')
 
     # resolve configured absolute paths: prefer given path, otherwise try alternative paths
     # Supports: D:\ (Windows laptop) -> P:\ (other Windows) -> /Volumes/Extreme SSD (Mac)
