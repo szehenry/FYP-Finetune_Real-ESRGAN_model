@@ -401,11 +401,20 @@ class LoRAEvalConfig:
     SAVE_ENHANCED_IMAGES = True
     ENHANCED_IMAGE_FORMAT = "png"
     
-    # Tile 處理配置（MPS 兼容）
-    # MPS: 強制使用 128（程式會自動覆蓋）
-    # CUDA: 可用 256-512
-    TILE_SIZE = 128  # 保守設定，適合 MPS
-    TILE_PAD = 16
+    # Tile 處理配置（自動根據設備調整）
+    # MPS: 自動使用 128
+    # CUDA: 自動使用 256（更快）
+    TILE_SIZE = None  # None = 自動選擇（CUDA:256, MPS:128）
+    TILE_PAD = 32  # padding 減少接縫
+    TILE_BLEND = True  # 啟用 tile 混合
+    
+    @classmethod
+    def get_tile_size(cls, device: str) -> int:
+        """根據設備返回最佳 tile size"""
+        if device == 'cuda':
+            return 256  # CUDA 可用更大的 tile
+        else:
+            return 128  # MPS 用保守設定
 
 
 # ==================== LoRA 模型載入 ====================
@@ -451,32 +460,27 @@ def load_lora_model(checkpoint_path: Path, base_model_path: Path, device: str,
     return model
 
 
-def enhance_image(model, img: np.ndarray, device: str, tile_size: int = 256, tile_pad: int = 16) -> np.ndarray:
-    """使用 LoRA 模型增強圖像（純 GPU 處理，無 CPU 回退）
+def enhance_image(model, img: np.ndarray, device: str, tile_size: int = 256, tile_pad: int = 32) -> np.ndarray:
+    """使用 LoRA 模型增強圖像（帶平滑混合的 Tile 處理）
     
     Args:
         model: LoRA 模型
         img: BGR 圖像 (numpy array)
         device: 'cuda' 或 'mps'
         tile_size: Tile 大小（MPS 用 128，CUDA 用 256-512）
-        tile_pad: Tile 邊緣填充
+        tile_pad: Tile 邊緣填充（越大混合越平滑）
     
     Returns:
         增強後的 BGR 圖像
-    
-    Raises:
-        RuntimeError: 如果處理失敗
     """
     # BGR -> RGB
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     h, w = img_rgb.shape[:2]
+    original_h, original_w = h, w
     
-    # MPS 兼容性：調整圖像尺寸為 64 的倍數（避免某些卷積問題）
+    # MPS 兼容性
     if device == 'mps':
-        # 強制使用較小的 tile（128 對 MPS 最穩定）
         tile_size = 128
-        
-        # 確保尺寸是 64 的倍數
         new_h = ((h + 63) // 64) * 64
         new_w = ((w + 63) // 64) * 64
         if new_h != h or new_w != w:
@@ -484,17 +488,14 @@ def enhance_image(model, img: np.ndarray, device: str, tile_size: int = 256, til
             h, w = new_h, new_w
     
     # 決定是否使用 tile 處理
-    # MPS: 始終使用 tile（更穩定）
-    # CUDA: 只對大圖使用 tile
     if device == 'mps':
-        use_tile = True  # MPS 始終用 tile，更穩定
+        use_tile = True
     else:
         use_tile = (h > 512 or w > 512)
     
-    scale = 4  # Real-ESRGAN 4x upscaling
+    scale = 4
     
     def process_tensor(img_tensor):
-        """在 GPU 上處理 tensor"""
         img_tensor = img_tensor.to(device)
         with torch.no_grad():
             output = model(img_tensor)
@@ -502,87 +503,112 @@ def enhance_image(model, img: np.ndarray, device: str, tile_size: int = 256, til
         return output
     
     if not use_tile:
-        # 小圖直接處理
         img_tensor = torch.from_numpy(img_rgb).float().permute(2, 0, 1).unsqueeze(0) / 255.0
         output = process_tensor(img_tensor)
-        
-        # 轉回 numpy BGR
         output_np = output.squeeze(0).permute(1, 2, 0).cpu().numpy()
         output_np = (output_np * 255).astype(np.uint8)
         output_bgr = cv2.cvtColor(output_np, cv2.COLOR_RGB2BGR)
         return output_bgr
     
-    # ========== Tile 處理 ==========
+    # ========== 帶混合的 Tile 處理 ==========
     output_h, output_w = h * scale, w * scale
     
-    # 創建輸出 tensor（在 CPU 上累積結果）
-    output = torch.zeros((1, 3, output_h, output_w), dtype=torch.float32)
+    # 輸出累積器和權重累積器（用於混合）
+    output_acc = np.zeros((output_h, output_w, 3), dtype=np.float32)
+    weight_acc = np.zeros((output_h, output_w, 1), dtype=np.float32)
     
-    # 計算 tile 數量
-    tiles_x = (w + tile_size - 1) // tile_size
-    tiles_y = (h + tile_size - 1) // tile_size
+    # 使用重疊的 tile（overlap = tile_pad）
+    step = tile_size  # 步長 = tile_size（重疊區域由 pad 處理）
     
-    # 處理每個 tile
-    for iy in range(tiles_y):
-        for ix in range(tiles_x):
-            # 輸入 tile 範圍（帶 padding）
-            x_start = max(0, ix * tile_size - tile_pad)
-            x_end = min(w, (ix + 1) * tile_size + tile_pad)
-            y_start = max(0, iy * tile_size - tile_pad)
-            y_end = min(h, (iy + 1) * tile_size + tile_pad)
+    # 計算 tile 位置
+    y_positions = list(range(0, h - tile_size + 1, step))
+    if y_positions[-1] + tile_size < h:
+        y_positions.append(h - tile_size)
+    
+    x_positions = list(range(0, w - tile_size + 1, step))
+    if x_positions[-1] + tile_size < w:
+        x_positions.append(w - tile_size)
+    
+    # 創建混合權重（中心權重高，邊緣權重低）
+    def create_blend_weight(size, pad):
+        """創建漸變混合權重"""
+        weight = np.ones((size, size), dtype=np.float32)
+        # 邊緣漸變
+        for i in range(pad):
+            factor = (i + 1) / (pad + 1)
+            weight[i, :] *= factor
+            weight[size - 1 - i, :] *= factor
+            weight[:, i] *= factor
+            weight[:, size - 1 - i] *= factor
+        return weight
+    
+    blend_weight_lr = create_blend_weight(tile_size + 2 * tile_pad, tile_pad)
+    
+    for y_start in y_positions:
+        for x_start in x_positions:
+            # 擴展範圍（加 padding）
+            y_start_pad = max(0, y_start - tile_pad)
+            y_end_pad = min(h, y_start + tile_size + tile_pad)
+            x_start_pad = max(0, x_start - tile_pad)
+            x_end_pad = min(w, x_start + tile_size + tile_pad)
             
-            # 提取 tile
-            tile = img_rgb[y_start:y_end, x_start:x_end]
-            
-            # 確保 tile 尺寸是 64 的倍數（MPS 兼容）
+            # 提取 tile（帶 padding）
+            tile = img_rgb[y_start_pad:y_end_pad, x_start_pad:x_end_pad].copy()
             th, tw = tile.shape[:2]
+            
+            # MPS 尺寸對齊
+            orig_th, orig_tw = th, tw
             if device == 'mps':
                 new_th = ((th + 63) // 64) * 64
                 new_tw = ((tw + 63) // 64) * 64
                 if new_th != th or new_tw != tw:
                     tile = cv2.resize(tile, (new_tw, new_th), interpolation=cv2.INTER_CUBIC)
             
+            # 處理 tile
             tile_tensor = torch.from_numpy(tile).float().permute(2, 0, 1).unsqueeze(0) / 255.0
-            
-            # 處理 tile（純 GPU）
             tile_output = process_tensor(tile_tensor)
-            
-            # 如果 tile 被 resize 過，需要縮放回原大小
             tile_output_np = tile_output.squeeze(0).permute(1, 2, 0).cpu().numpy()
-            if device == 'mps' and (new_th != th or new_tw != tw):
-                # 縮放輸出回原尺寸
-                expected_h = (y_end - y_start) * scale
-                expected_w = (x_end - x_start) * scale
+            
+            # 縮放回原尺寸
+            expected_h = orig_th * scale
+            expected_w = orig_tw * scale
+            if tile_output_np.shape[0] != expected_h or tile_output_np.shape[1] != expected_w:
                 tile_output_np = cv2.resize(tile_output_np, (expected_w, expected_h), interpolation=cv2.INTER_CUBIC)
             
-            tile_output = torch.from_numpy(tile_output_np).permute(2, 0, 1).unsqueeze(0)
+            # 創建此 tile 的混合權重
+            tile_weight = np.ones((expected_h, expected_w, 1), dtype=np.float32)
             
-            # 計算輸出位置
-            out_x_start = ix * tile_size * scale
-            out_y_start = iy * tile_size * scale
-            out_x_end = min(output_w, (ix + 1) * tile_size * scale)
-            out_y_end = min(output_h, (iy + 1) * tile_size * scale)
+            # 邊緣漸變（軟邊界）
+            fade_size = tile_pad * scale
+            for i in range(min(fade_size, expected_h // 2)):
+                factor = (i + 1) / (fade_size + 1)
+                tile_weight[i, :, 0] *= factor
+                tile_weight[expected_h - 1 - i, :, 0] *= factor
+            for i in range(min(fade_size, expected_w // 2)):
+                factor = (i + 1) / (fade_size + 1)
+                tile_weight[:, i, 0] *= factor
+                tile_weight[:, expected_w - 1 - i, 0] *= factor
             
-            # 計算 tile 內的有效區域（去除 padding）
-            pad_left = (ix * tile_size - x_start) * scale
-            pad_top = (iy * tile_size - y_start) * scale
-            pad_right = pad_left + (out_x_end - out_x_start)
-            pad_bottom = pad_top + (out_y_end - out_y_start)
+            # 累積到輸出
+            out_y_start = y_start_pad * scale
+            out_y_end = y_end_pad * scale
+            out_x_start = x_start_pad * scale
+            out_x_end = x_end_pad * scale
             
-            # 複製到輸出
-            output[:, :, out_y_start:out_y_end, out_x_start:out_x_end] = \
-                tile_output[:, :, pad_top:pad_bottom, pad_left:pad_right]
+            output_acc[out_y_start:out_y_end, out_x_start:out_x_end] += tile_output_np * tile_weight
+            weight_acc[out_y_start:out_y_end, out_x_start:out_x_end] += tile_weight
             
-            # 清理 tile 內存
+            # 清理
             del tile_tensor, tile_output
             if device == 'mps':
                 torch.mps.empty_cache()
             elif device == 'cuda':
                 torch.cuda.empty_cache()
     
-    # 轉回 numpy BGR
-    output_np = output.squeeze(0).permute(1, 2, 0).numpy()
-    output_np = (output_np * 255).astype(np.uint8)
+    # 歸一化（加權平均）
+    weight_acc = np.maximum(weight_acc, 1e-8)  # 避免除以零
+    output_np = output_acc / weight_acc
+    output_np = np.clip(output_np * 255, 0, 255).astype(np.uint8)
     output_bgr = cv2.cvtColor(output_np, cv2.COLOR_RGB2BGR)
     
     return output_bgr
@@ -783,9 +809,10 @@ class LoRAEvaluator:
                 if degraded.shape != original.shape:
                     degraded = cv2.resize(degraded, (original.shape[1], original.shape[0]))
                 
-                # 增強（使用 tile 處理避免 MPS 限制）
+                # 增強（使用 tile 處理，根據設備自動調整）
+                tile_size = self.config.get_tile_size(self.device)
                 enhanced = enhance_image(self.model, degraded, self.device, 
-                                         tile_size=self.config.TILE_SIZE, 
+                                         tile_size=tile_size, 
                                          tile_pad=self.config.TILE_PAD)
                 
                 # 確保增強後尺寸與原圖一致

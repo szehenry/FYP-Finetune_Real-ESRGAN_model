@@ -1,35 +1,36 @@
 # ============================================================
 # LoRA Training - RTX 4060 Configuration (8GB VRAM)
 # ============================================================
+# 針對 NVIDIA RTX 4060 優化的配置（改進版）
 
-# Paths - modify these for the other computer
-model_path: "D:/Real-ESRGAN/experiments/pretrained_models/RealESRGAN_x4plus.pth"
-pairs_csv: "D:/degraded_full_dataset/pairs.csv"
+# === Paths ===
+model_path: "P:/Real-ESRGAN/experiments/pretrained_models/RealESRGAN_x4plus.pth"
+pairs_csv: "P:/degraded_full_dataset/pairs.csv"
 
-# LoRA Architecture
-rank: 8
+# === LoRA Architecture ===
+rank: 32              # 更大容量，學習複雜去模糊
 alpha: 1.0
 
 # === RTX 4060 OPTIMIZED ===
-lr: 1e-4
-batch_size: 2         # 安全的 batch size
-epochs: 50
-patch_size: 128       # LR: 128x128 → HR: 512x512
+lr: 5e-5              # 較低學習率，避免過度平滑
+batch_size: 4         # RTX 4060 8GB 可承受
+epochs: 80            # 充分訓練
+patch_size: 256       # LR: 256x256 → HR: 1024x1024（更大感受野）
 scale: 4
 
-# Learning rate scheduler
+# === Learning Rate Scheduler ===
 use_scheduler: true
-lr_milestones: [25, 40]
+lr_milestones: [40, 60]
 lr_gamma: 0.5
 
-# Loss
-use_perceptual_loss: false
-perceptual_weight: 0.1
+# === Loss Functions ===
+use_perceptual_loss: true   # ✅ 關鍵！使用感知損失保持銳度
+perceptual_weight: 0.2
 
-# Performance
-amp: true
+# === Performance (CUDA) ===
+amp: true             # ✅ RTX 4060 支援 AMP，加速訓練
 
-# Checkpointing
+# === Checkpointing ===
 checkpoint: "./lora_checkpoint.pth"
 epoched_checkpoints: true
 save_lora_only: true

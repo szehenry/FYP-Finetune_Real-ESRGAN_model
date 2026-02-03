@@ -10,10 +10,10 @@ pairs_csv: "D:/degraded_full_dataset/pairs.csv"
 # === LoRA Architecture ===
 # rank: Controls model capacity
 #   - 4: ~230K params, fast training, simple tasks
-#   - 8: ~460K params, balanced (RECOMMENDED)
+#   - 8: ~460K params, balanced
 #   - 16: ~920K params, complex degradations
-#   - 32: ~1.8M params, very complex tasks
-rank: 16
+#   - 32: ~1.8M params, very complex tasks (RECOMMENDED for motion blur)
+rank: 32  # ⬆️ 增加容量，學習更複雜的去模糊
 
 # alpha: Scaling factor for LoRA output
 #   - 1.0: Standard (RECOMMENDED)
@@ -24,9 +24,9 @@ alpha: 1.0
 # === Training Hyperparameters ===
 # lr: Learning rate
 #   - 5e-5: Slow but stable
-#   - 1e-4: Standard (RECOMMENDED)
+#   - 1e-4: Standard
 #   - 2e-4: Faster but may oscillate
-lr: 1e-4
+lr: 5e-5  # ⬇️ 降低學習率，避免過度平滑
 
 # batch_size: Images per batch
 #   - 2: ~12GB VRAM (Mac MPS recommended)
@@ -34,21 +34,21 @@ lr: 1e-4
 #   - 8: ~40GB VRAM (may exceed MPS limit on Mac)
 #   - 16: ~80GB VRAM (CUDA only)
 # Note: For Mac, start with batch_size=2, increase if memory allows
-batch_size: 4
+batch_size: 2  # ⬇️ 減少以支援更大的 patch_size
 
 # epochs: Training iterations
 #   - 20-30: Quick experiment
-#   - 50: Standard training (RECOMMENDED)
+#   - 50: Standard training
 #   - 100: Deep training (watch for overfitting)
-epochs: 50
+epochs: 80  # ⬆️ 增加訓練時間
 
 # patch_size: Crop size for training (LR input size)
-#   - 128: Fast, less context (Mac MPS recommended)
-#   - 192: Balanced for Mac
+#   - 128: Fast, less context
+#   - 192: Balanced for Mac (RECOMMENDED)
 #   - 256: Balanced (CUDA recommended)
 #   - 384/512: More context, more VRAM (CUDA only)
-# Note: HR output = patch_size * scale (e.g., 128*4=512, 256*4=1024)
-patch_size: 128
+# Note: HR output = patch_size * scale (e.g., 192*4=768)
+patch_size: 192  # ⬆️ 更大的感受野，學習全局運動模糊
 
 # scale: Upscaling factor (must match pretrained model)
 scale: 4
@@ -61,10 +61,10 @@ lr_gamma: 0.5 # Multiply LR by this at each milestone
 # === Loss Functions ===
 # L1 loss is always enabled
 # use_perceptual_loss: Add LPIPS for better visual quality
-#   - false: Pixel-level optimization only
-#   - true: Add perceptual quality (RECOMMENDED for visual tasks)
-use_perceptual_loss: false
-perceptual_weight: 0.1
+#   - false: Pixel-level optimization only (tends to blur)
+#   - true: Add perceptual quality (RECOMMENDED - preserves sharpness!)
+use_perceptual_loss: true  # ⬆️ 關鍵！使用感知損失保持銳度
+perceptual_weight: 0.2  # ⬆️ 增加感知損失權重（0.1-0.3）
 
 # === Performance ===
 # amp: Automatic Mixed Precision (faster, less VRAM) true for windows, false for macos
