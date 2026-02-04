@@ -8,7 +8,7 @@ if defined _OLD_CODEPAGE (
     "%SystemRoot%\System32\chcp.com" 65001 > nul
 )
 
-set VIRTUAL_ENV=C:\Users\henry\OneDrive - The Hong Kong Polytechnic University\Y4_SEM1\FYP\venv_lora_win
+set "VIRTUAL_ENV=C:\Users\22077541d\Documents\GitHub\FYP\venv_lora_win"
 
 if not defined PROMPT set PROMPT=$P$G
 
@@ -24,8 +24,8 @@ set PYTHONHOME=
 if defined _OLD_VIRTUAL_PATH set PATH=%_OLD_VIRTUAL_PATH%
 if not defined _OLD_VIRTUAL_PATH set _OLD_VIRTUAL_PATH=%PATH%
 
-set PATH=%VIRTUAL_ENV%\Scripts;%PATH%
-set VIRTUAL_ENV_PROMPT=(venv_lora_win) 
+set "PATH=%VIRTUAL_ENV%\Scripts;%PATH%"
+set "VIRTUAL_ENV_PROMPT=(venv_lora_win) "
 
 :END
 if defined _OLD_CODEPAGE (

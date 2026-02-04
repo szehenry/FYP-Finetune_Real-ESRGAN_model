@@ -603,6 +603,23 @@ def train_loop(cfg, resume: bool = False):
                     torch.mps.empty_cache()
                     # Force synchronization to ensure memory is freed
                     torch.mps.synchronize()
+            
+            # Intra-epoch checkpoint: save every N iterations (default: 500)
+            save_every_n = int(cfg.get('save_every_n_iterations', 500))
+            if save_every_n > 0 and (i + 1) % save_every_n == 0:
+                session_elapsed = time.time() - session_start_time
+                total_time = accumulated_time + session_elapsed
+                ck_state = {
+                    'epoch': epoch,  # Current epoch (not completed yet)
+                    'iteration': i + 1,
+                    'model_state': model.state_dict(),
+                    'optim_state': optimizer.state_dict(),
+                    'scheduler_state': scheduler.state_dict() if scheduler is not None else None,
+                    'total_training_time': total_time,
+                }
+                ck_path = Path(cfg['checkpoint'])
+                save_checkpoint(ck_state, ck_path)
+                tqdm.write(f'  💾 Checkpoint saved at iteration {i+1}/{len(dl)} (total time: {format_duration(total_time)})')
 
         avg_loss = total_loss / len(dl)
         epoch_time = time.time() - epoch_start_time
@@ -701,7 +718,8 @@ if __name__ == '__main__':
     if not cfg_path.exists():
         print('Config not found:', cfg_path)
         sys.exit(1)
-    cfg = yaml.safe_load(open(cfg_path))
+    with open(cfg_path, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
     # override mode
     cfg['mode'] = args.mode
     if args.mode == 'small':

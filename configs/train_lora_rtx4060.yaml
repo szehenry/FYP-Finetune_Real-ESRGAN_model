@@ -13,7 +13,7 @@ alpha: 1.0
 
 # === RTX 4060 OPTIMIZED ===
 lr: 5e-5              # 較低學習率，避免過度平滑
-batch_size: 4         # RTX 4060 8GB 可承受
+batch_size: 2         # Reduced: LPIPS + 1024x1024 HR needs more VRAM
 epochs: 80            # 充分訓練
 patch_size: 256       # LR: 256x256 → HR: 1024x1024（更大感受野）
 scale: 4
@@ -35,3 +35,4 @@ checkpoint: "./lora_checkpoint.pth"
 epoched_checkpoints: true
 save_lora_only: true
 keep_last: 5
+save_every_n_iterations: 500   # Save checkpoint every 500 iterations (~6 hours)
