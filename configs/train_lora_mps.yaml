@@ -17,7 +17,7 @@ lr: 5e-5  # 較低學習率，避免過度平滑
 # Mac MPS 優化設置（記憶體較保守）
 batch_size: 2  # MPS 記憶體管理不如 CUDA，用較小 batch
 epochs: 80
-patch_size: 192  # MPS 用較小的 patch（192 是平衡點）
+patch_size: 256  # MPS 用較小的 patch（256 是平衡點）
 scale: 4
 
 # === Learning Rate Scheduler ===
@@ -33,7 +33,9 @@ perceptual_weight: 0.2
 amp: false  # ❌ MPS 不支援 AMP
 
 # === Checkpointing ===
-checkpoint: "./lora_checkpoint_mps.pth"
+# 跨平台共用 checkpoint（可在 Windows/Mac 間互相 resume）
+checkpoint: "./lora_checkpoint_r32.pth"
 epoched_checkpoints: true
 save_lora_only: true
 keep_last: 5
+save_every_n_iterations: 500   # Save checkpoint every 500 iterations (~6 hours)

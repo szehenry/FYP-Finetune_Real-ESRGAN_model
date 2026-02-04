@@ -31,7 +31,8 @@ perceptual_weight: 0.2
 amp: true             # ✅ RTX 4060 支援 AMP，加速訓練
 
 # === Checkpointing ===
-checkpoint: "./lora_checkpoint.pth"
+# 使用新文件名，避免覆蓋舊的 rank=8/16 訓練結果
+checkpoint: "./lora_checkpoint_r32.pth"
 epoched_checkpoints: true
 save_lora_only: true
 keep_last: 5
