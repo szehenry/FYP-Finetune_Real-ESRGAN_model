@@ -36,4 +36,4 @@ checkpoint: "./lora_checkpoint_r32.pth"
 epoched_checkpoints: true
 save_lora_only: true
 keep_last: 5
-save_every_n_iterations: 500   # Save checkpoint every 500 iterations (~6 hours)
+save_every_n_iterations: 400   # Save checkpoint every 500 iterations (~6 hours)
