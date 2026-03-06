@@ -377,7 +377,7 @@ class LoRAEvalConfig:
             cls.OUTPUT_DIR = Path(custom_output_dir)
         else:
             base = get_output_base_path()
-            cls.OUTPUT_DIR = base / "lora_eval_results"
+            cls.OUTPUT_DIR = base / "lora_r32_eval_results"
         
         cls.LEADERBOARD_DIR = cls.OUTPUT_DIR / "leaderboards"
         cls.ENHANCED_DIR = cls.OUTPUT_DIR / "enhanced_images"
@@ -778,6 +778,16 @@ class LoRAEvaluator:
         success_count = len(processed_images)
         failed_count = 0
         
+        # Ctrl+C 處理：立即保存 checkpoint 再退出
+        import signal
+        def _handle_interrupt(signum, frame):
+            print(f"\n\n⚠️  評估中斷！正在保存 checkpoint...")
+            self.save_checkpoint(all_results, processed_images, -1)
+            print(f"  ✅ 已保存進度（{len(processed_images)} 張）")
+            print(f"  重新運行相同命令即可從此繼續")
+            sys.exit(0)
+        signal.signal(signal.SIGINT, _handle_interrupt)
+        
         print(f"\n📊 處理圖像...")
         
         for enum_idx, (idx, row) in enumerate(tqdm(pairs_to_evaluate.iterrows(), 
@@ -963,15 +973,15 @@ class LoRAEvaluator:
 
 def main():
     parser = argparse.ArgumentParser(description='評估 LoRA 微調的 Real-ESRGAN 模型')
-    parser.add_argument('--checkpoint', type=str, default='./lora_checkpoint.pth',
-                        help='LoRA checkpoint 路徑 (預設: ./lora_checkpoint.pth)')
+    parser.add_argument('--checkpoint', type=str, default='./lora_checkpoint_r32.pth',
+                        help='LoRA checkpoint 路徑 (預設: ./lora_checkpoint_r32.pth)')
     parser.add_argument('--base_model', type=str, default=None,
                         help='Base model 路徑 (預設: 自動解析)')
     parser.add_argument('--pairs_csv', type=str, default=None,
                         help='pairs.csv 路徑 (預設: 自動解析)')
     parser.add_argument('--output_dir', type=str, default=None,
-                        help='輸出目錄 (預設: D:/lora_eval_results 或 P:/ 或 /Volumes/Extreme SSD/)')
-    parser.add_argument('--rank', type=int, default=16, help='LoRA rank')
+                        help='輸出目錄 (預設: D:/lora_r32_eval_results 或 P:/ 或 /Volumes/Extreme SSD/)')
+    parser.add_argument('--rank', type=int, default=32, help='LoRA rank (預設: 32)')
     parser.add_argument('--alpha', type=float, default=1.0, help='LoRA alpha')
     parser.add_argument('--max_samples', type=int, default=None,
                         help='限制評估樣本數 (用於快速測試)')
