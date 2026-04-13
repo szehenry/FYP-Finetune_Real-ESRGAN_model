@@ -16,6 +16,8 @@
 """
 
 import os
+import sys
+import argparse
 import cv2
 import numpy as np
 import pandas as pd
@@ -438,15 +440,154 @@ class BaselineEvaluatorWithGT:
             worst_cases.to_csv(failure_list_path, index=False, encoding='utf-8-sig')
         
         print(f"  ✓ 失敗案例已保存至: {self.config.FAILURE_DIR}")
+    
+    def evaluate_single_image(self, input_path: Path, gt_path: Optional[Path], output_dir: Path):
+        """對單張圖像執行所有基準方法並輸出對比圖"""
+        import matplotlib.pyplot as plt
+
+        print(f"\n📷 輸入圖像: {input_path}")
+        if gt_path:
+            print(f"🎯 Ground Truth: {gt_path}")
+        print(f"📁 輸出目錄: {output_dir}")
+
+        # 讀取退化圖像
+        degraded = cv2.imread(str(input_path))
+        if degraded is None:
+            print(f"❌ 無法讀取圖像: {input_path}")
+            return
+
+        # 讀取 GT（如果提供）
+        original = None
+        if gt_path is not None:
+            original = cv2.imread(str(gt_path))
+            if original is None:
+                print(f"⚠️  無法讀取 GT 圖像: {gt_path}，將跳過有參考指標")
+            elif degraded.shape != original.shape:
+                print(f"  ⚠️  尺寸不匹配，自動 resize 退化圖像")
+                degraded = cv2.resize(degraded, (original.shape[1], original.shape[0]))
+
+        # 應用所有基準方法
+        panels = {}
+        if original is not None:
+            panels['Original (GT)'] = original
+        panels['Degraded (Input)'] = degraded
+
+        metrics_rows = []
+        for method_name, method_func in self.baseline_methods.items():
+            try:
+                enhanced = method_func(degraded)
+                panels[method_name] = enhanced
+
+                if original is not None:
+                    m = self.calculator.evaluate_with_reference(enhanced, original)
+                    metrics_rows.append({'method': method_name, **m})
+                    psnr_str = f"  PSNR={m.get('psnr', 0):.2f} dB  SSIM={m.get('ssim', 0):.4f}"
+                    print(f"  [{method_name:10s}]{psnr_str}")
+            except Exception as e:
+                print(f"  ⚠️  {method_name} 失敗: {e}")
+
+        # 建立對比圖
+        num_panels = len(panels)
+        cols = 4
+        rows = (num_panels + cols - 1) // cols
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 4, rows * 3))
+        axes = axes.flatten() if num_panels > 1 else [axes]
+
+        for i, (name, img) in enumerate(panels.items()):
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            axes[i].imshow(img_rgb)
+
+            # 在標題加上指標
+            title = name
+            if original is not None and name not in ('Original (GT)', 'Degraded (Input)'):
+                row = next((r for r in metrics_rows if r['method'] == name), None)
+                if row:
+                    title += f"\nPSNR={row.get('psnr', 0):.2f} SSIM={row.get('ssim', 0):.4f}"
+            axes[i].set_title(title, fontsize=9)
+            axes[i].axis('off')
+
+        for i in range(num_panels, len(axes)):
+            axes[i].axis('off')
+
+        plt.suptitle(f"Baseline Comparison — {input_path.name}", fontsize=12, fontweight='bold')
+        plt.tight_layout()
+
+        # 儲存
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_file = output_dir / f"{input_path.stem}_comparison.png"
+        plt.savefig(output_file, dpi=120, bbox_inches='tight')
+        plt.close()
+        print(f"\n✅ 對比圖已儲存: {output_file}")
+
+        # 若有指標，也儲存 CSV
+        if metrics_rows:
+            metrics_csv = output_dir / f"{input_path.stem}_metrics.csv"
+            pd.DataFrame(metrics_rows).to_csv(metrics_csv, index=False, encoding='utf-8-sig')
+            print(f"✅ 指標 CSV 已儲存: {metrics_csv}")
 
 
 # ==================== 主程序 ====================
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="基準測試評估（有參考指標）",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=(
+            "範例用法：\n"
+            "  # 單張圖像模式（無 GT）\n"
+            "  python baseline_evaluation_with_gt.py --input /path/to/degraded.jpg\n\n"
+            "  # 單張圖像模式（有 GT）\n"
+            "  python baseline_evaluation_with_gt.py --input /path/to/degraded.jpg --gt /path/to/original.jpg\n\n"
+            "  # 自訂輸出目錄\n"
+            "  python baseline_evaluation_with_gt.py --input /path/to/degraded.jpg \\\n"
+            "      --output-dir '/Volumes/Extreme SSD/baseline_results_old/comparison_samples'\n\n"
+            "  # 批次模式（使用 pairs.csv）\n"
+            "  python baseline_evaluation_with_gt.py --batch"
+        )
+    )
+    parser.add_argument(
+        '--input', '-i', type=str, default=None,
+        help='輸入退化圖像路徑（單張圖像模式）'
+    )
+    parser.add_argument(
+        '--gt', '-g', type=str, default=None,
+        help='Ground Truth 原始圖像路徑（可選，用於計算 PSNR/SSIM）'
+    )
+    parser.add_argument(
+        '--output-dir', '-o', type=str,
+        default='/Volumes/Extreme SSD/baseline_results_old/comparison_samples',
+        help='對比圖輸出目錄（預設：/Volumes/Extreme SSD/baseline_results_old/comparison_samples）'
+    )
+    parser.add_argument(
+        '--batch', action='store_true',
+        help='批次模式：使用 pairs.csv 評估所有圖像（預設行為）'
+    )
+    return parser.parse_args()
+
+
 def main():
     """主函數"""
+    args = parse_args()
+
     print("\n" + "=" * 80)
     print("🚀 基準測試與完整性檢查（有參考評估）")
     print("=" * 80)
+
+    # ── 單張圖像模式 ──────────────────────────────────────────────
+    if args.input is not None:
+        input_path = Path(args.input)
+        if not input_path.exists():
+            print(f"❌ 找不到輸入圖像: {input_path}")
+            sys.exit(1)
+
+        gt_path = Path(args.gt) if args.gt else None
+        output_dir = Path(args.output_dir)
+
+        evaluator = BaselineEvaluatorWithGT()
+        evaluator.evaluate_single_image(input_path, gt_path, output_dir)
+        return
+
+    # ── 批次模式 ──────────────────────────────────────────────────
     print("\n📋 配置資訊:")
     print(f"  退化圖像目錄: {ConfigWithGT.DEGRADED_DIR}")
     print(f"  原始圖像目錄: {ConfigWithGT.ORIGINAL_DIR}")
@@ -455,13 +596,10 @@ def main():
     print(f"  設備: {ConfigWithGT.DEVICE}")
     print(f"  LPIPS 可用: {'是' if LPIPS_AVAILABLE else '否'}")
     print(f"  PYIQA 可用: {'是' if PYIQA_AVAILABLE else '否'}")
-    
-    # 創建評估器
+
     evaluator = BaselineEvaluatorWithGT()
-    
-    # 執行評估
     evaluator.evaluate_all_baselines()
-    
+
     print("\n✅ 所有任務完成！")
     print(f"\n📁 請檢查輸出目錄: {ConfigWithGT.OUTPUT_DIR}")
     print("\n💡 提示：排行榜中包含 PSNR/SSIM/LPIPS 等有參考指標")
