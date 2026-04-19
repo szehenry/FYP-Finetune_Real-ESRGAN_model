@@ -13,10 +13,11 @@ LoRA-finetuned Real-ESRGAN 單圖增強腳本
 
   python enhancement_lora_model.py
 
+  python enhancement_lora_model.py --input <input_image_path> --output <output_image_path>
+
   運行後會提示輸入圖像路徑，增強結果保存到 enhanced_image_output 資料夾。
 
-作者：FYP Project
-日期：2025-01
+
 """
 
 import sys
