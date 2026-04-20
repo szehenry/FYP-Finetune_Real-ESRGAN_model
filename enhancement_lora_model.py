@@ -21,6 +21,7 @@ LoRA-finetuned Real-ESRGAN 單圖增強腳本
 """
 
 import sys
+import argparse
 import cv2
 import numpy as np
 from pathlib import Path
@@ -304,7 +305,68 @@ def enhance_image(model, img: np.ndarray, device: str, tile_size: int = 256, til
 
 # ==================== 主程序 ====================
 
+IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff', '.webp'}
+
+
+def process_one(model, input_path: str, output_dir_or_file: Path) -> bool:
+    """處理單張圖像，回傳是否成功。"""
+    input_path = input_path.strip('"').strip("'")
+    img_path = Path(resolve_path(input_path))
+    if not img_path.exists():
+        print(f"❌ 找不到檔案: {input_path}")
+        return False
+
+    img = cv2.imread(str(img_path))
+    if img is None:
+        print(f"❌ 無法讀取圖像: {img_path}")
+        return False
+
+    h_in, w_in = img.shape[:2]
+    print(f"處理中: {img_path.name} ({w_in}×{h_in})...")
+    if h_in > 2000 or w_in > 2000:
+        print(f"  ⚠️  大圖 ({w_in}×{h_in}) 需較長時間，請耐心等待...")
+
+    try:
+        enhanced = enhance_image(
+            model, img, DEVICE,
+            tile_size=256 if DEVICE == 'cuda' else 128,
+            tile_pad=32,
+        )
+        if isinstance(output_dir_or_file, Path) and output_dir_or_file.suffix.lower() in IMAGE_EXTS:
+            out_path = output_dir_or_file
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            out_dir = Path(output_dir_or_file)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"enhanced_{img_path.stem}.png"
+        cv2.imwrite(str(out_path), enhanced)
+        print(f"✅ 已保存: {out_path}")
+        return True
+    except Exception as e:
+        print(f"❌ 處理失敗: {e}")
+        return False
+    finally:
+        gc.collect()
+        if DEVICE == 'cuda':
+            torch.cuda.empty_cache()
+        elif DEVICE == 'mps':
+            torch.mps.empty_cache()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="LoRA 單圖增強。可用 --input/--output 一次性處理，或不帶參數進入互動模式。",
+    )
+    parser.add_argument('--input', '-i', type=str, default=None,
+                        help='輸入圖像路徑。提供後會直接處理並退出（不進入互動模式）。')
+    parser.add_argument('--output', '-o', type=str, default=None,
+                        help='輸出資料夾或檔案路徑。預設為腳本目錄下的 enhanced_image_output/')
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     print("\n" + "=" * 60)
     print("🖼️  LoRA 單圖增強")
     print("=" * 60)
@@ -326,8 +388,22 @@ def main():
     print(f"\n載入模型中... (設備: {DEVICE})")
     model = load_lora_model(checkpoint_path, base_model_path, DEVICE, rank=32, alpha=1.0)
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"\n輸出目錄: {OUTPUT_DIR}")
+    if args.output:
+        output_target = Path(args.output).expanduser()
+        if args.output.endswith(('/', '\\')) or output_target.is_dir() or output_target.suffix.lower() not in IMAGE_EXTS:
+            output_target.mkdir(parents=True, exist_ok=True)
+            print(f"\n輸出目錄: {output_target}")
+        else:
+            output_target.parent.mkdir(parents=True, exist_ok=True)
+            print(f"\n輸出檔案: {output_target}")
+    else:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_target = OUTPUT_DIR
+        print(f"\n輸出目錄: {OUTPUT_DIR}")
+
+    if args.input:
+        ok = process_one(model, args.input, output_target)
+        sys.exit(0 if ok else 1)
 
     while True:
         print("\n" + "-" * 40)
@@ -335,36 +411,7 @@ def main():
         if path_input.lower() in ('q', 'quit', 'exit'):
             print("再見！")
             break
-
-        path_input = path_input.strip('"').strip("'")
-        img_path = Path(resolve_path(path_input))
-        if not img_path.exists():
-            print(f"❌ 找不到檔案: {path_input}")
-            continue
-
-        img = cv2.imread(str(img_path))
-        if img is None:
-            print(f"❌ 無法讀取圖像: {img_path}")
-            continue
-
-        h_in, w_in = img.shape[:2]
-        print(f"處理中: {img_path.name} ({w_in}×{h_in})...")
-        if h_in > 2000 or w_in > 2000:
-            print(f"  ⚠️  大圖 ({w_in}×{h_in}) 需較長時間，請耐心等待...")
-        try:
-            enhanced = enhance_image(model, img, DEVICE, tile_size=256 if DEVICE == 'cuda' else 128, tile_pad=32)
-            out_name = f"enhanced_{img_path.stem}.png"
-            out_path = OUTPUT_DIR / out_name
-            cv2.imwrite(str(out_path), enhanced)
-            print(f"✅ 已保存: {out_path}")
-        except Exception as e:
-            print(f"❌ 處理失敗: {e}")
-        finally:
-            gc.collect()
-            if DEVICE == 'cuda':
-                torch.cuda.empty_cache()
-            elif DEVICE == 'mps':
-                torch.mps.empty_cache()
+        process_one(model, path_input, output_target)
 
 
 if __name__ == '__main__':
